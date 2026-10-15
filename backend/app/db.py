@@ -36,3 +36,25 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS emails (
+                id          SERIAL PRIMARY KEY,
+                gmail_id    TEXT NOT NULL UNIQUE,
+                thread_id   TEXT NOT NULL,
+                sender      TEXT NOT NULL,
+                subject     TEXT NOT NULL,
+                body        TEXT NOT NULL,
+                category    TEXT NOT NULL,
+                confidence  REAL NOT NULL,
+                urgency     TEXT NOT NULL,
+                language    TEXT NOT NULL,
+                summary     TEXT NOT NULL,
+                draft_reply TEXT,
+                needs_human BOOLEAN NOT NULL DEFAULT TRUE,
+                status      TEXT NOT NULL DEFAULT 'processing',
+                received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )

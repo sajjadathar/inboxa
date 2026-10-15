@@ -13,6 +13,8 @@ from app.db import init_db
 from app.llm import LLMError
 from app.reply import ReplyOut, draft_reply
 
+from app.emails import EmailCreate, EmailOut, EmailUpdate, get_email, list_emails, save_email, update_email
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -116,3 +118,34 @@ def reply(email: EmailIn):
         raise HTTPException(status_code=502, detail=str(e))
     except (ValidationError, TypeError) as e:
         raise HTTPException(status_code=502, detail=f"AI answer had the wrong shape: {e}")
+
+
+# ---------- Emails ----------
+
+@app.post("/emails", response_model=EmailOut, status_code=201)
+def create_email(email: EmailCreate):
+    """n8n calls this to save an email with its AI results."""
+    return save_email(email)
+
+
+@app.get("/emails", response_model=list[EmailOut])
+def read_emails(status: str | None = None, category: str | None = None, limit: int = 50):
+    """List emails, newest first. Example: /emails?status=needs_approval"""
+    return list_emails(status, category, limit)
+
+
+@app.get("/emails/{email_id}", response_model=EmailOut)
+def read_email(email_id: int):
+    email = get_email(email_id)
+    if not email:
+        raise HTTPException(status_code=404, detail="Email not found")
+    return email
+
+
+@app.patch("/emails/{email_id}", response_model=EmailOut)
+def change_email(email_id: int, changes: EmailUpdate):
+    """Change the status or the draft. Only the fields you send are changed."""
+    email = update_email(email_id, changes)
+    if not email:
+        raise HTTPException(status_code=404, detail="Email not found")
+    return email
