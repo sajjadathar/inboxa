@@ -1,0 +1,74 @@
+# Inboxa — local development stack
+# Start everything:            docker compose up -d
+# Start with local AI (Ollama): docker compose --profile local-ai up -d
+
+services:
+  # Database: Postgres with the pgvector extension (stores emails, contacts, FAQ embeddings)
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./infra/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Workflow engine: watches Gmail and moves each email through the steps
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    ports:
+      - "5678:5678"
+    environment:
+      GENERIC_TIMEZONE: ${TIMEZONE}
+      TZ: ${TIMEZONE}
+      N8N_SECURE_COOKIE: "false"   # fine on localhost only
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # AI service: classify emails, write replies, score leads
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    volumes:
+      - ./backend/app:/code/app   # code changes reload without rebuilding
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Dashboard (Next.js). Create the app first — see README step 3.
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../infra/frontend.Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      WATCHPACK_POLLING: "true"   # makes hot reload work inside Docker
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+
+
+volumes:
+  db_data:
+  n8n_data:
