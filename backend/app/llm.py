@@ -103,3 +103,71 @@ def _ollama(system: str, user: str, schema: dict) -> dict:
         return json.loads(r.json()["message"]["content"])
     except Exception as e:
         raise LLMError(f"Ollama error: {e}") from e
+
+
+# ---------- Embeddings (turn text into numbers for search) ----------
+
+def embed(texts: list[str], task: str = "document") -> list[list[float]]:
+    """Turn each text into a list of numbers (a vector).
+
+    task="document" for knowledge-base chunks, task="query" for a customer question.
+    Similar meanings give similar vectors, which is how search finds the right FAQ.
+    """
+    provider = settings.llm_provider.lower()
+    if provider == "gemini":
+        return _gemini_embed(texts, task)
+    if provider == "ollama":
+        return _ollama_embed(texts)
+    raise LLMError(f"Embeddings for '{provider}' are not set up yet. Use gemini or ollama.")
+
+
+def _gemini_embed(texts: list[str], task: str) -> list[list[float]]:
+    if not settings.gemini_api_key:
+        raise LLMError("No Gemini key. Add GOOGLE_API_KEY=... to your .env file.")
+
+    model = settings.embed_model
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:batchEmbedContents"
+    task_type = "RETRIEVAL_DOCUMENT" if task == "document" else "RETRIEVAL_QUERY"
+    vectors: list[list[float]] = []
+
+    for start in range(0, len(texts), 100):  # Gemini accepts up to 100 texts per call
+        batch = texts[start:start + 100]
+        body = {
+            "requests": [
+                {
+                    "model": f"models/{model}",
+                    "content": {"parts": [{"text": t}]},
+                    "taskType": task_type,
+                    "outputDimensionality": settings.embed_dim,
+                }
+                for t in batch
+            ]
+        }
+        try:
+            r = httpx.post(
+                url, json=body,
+                headers={"x-goog-api-key": settings.gemini_api_key},
+                timeout=TIMEOUT,
+            )
+        except httpx.HTTPError as e:
+            raise LLMError(f"Could not reach Gemini: {e}") from e
+        if r.status_code == 429:
+            raise LLMError("Gemini free-tier limit reached. Wait a minute and try again.")
+        if r.status_code != 200:
+            raise LLMError(f"Gemini embedding error {r.status_code}: {r.text[:300]}")
+        vectors += [e["values"] for e in r.json()["embeddings"]]
+
+    return vectors
+
+
+def _ollama_embed(texts: list[str]) -> list[list[float]]:
+    try:
+        r = httpx.post(
+            f"{settings.ollama_base_url}/api/embed",
+            json={"model": settings.embed_model, "input": texts},
+            timeout=TIMEOUT * 3,
+        )
+        r.raise_for_status()
+        return r.json()["embeddings"]
+    except Exception as e:
+        raise LLMError(f"Ollama embedding error: {e}") from e
